@@ -39,7 +39,7 @@
   <div id="overlay">
     <div class="spinner"></div>
     <h1 id="ov-title">Connecting to fl1nt cl0ud</h1>
-    <p id="ov-text">Booting the proxy engine and tunnelling through the wisp network...</p>
+    <p id="ov-text">Booting the pr0xy engine and tunnelling through the wisp network...</p>
     <div class="status" id="ov-status"></div>
   </div>
 
@@ -89,7 +89,7 @@
       const wispUrl = await pickWisp();
       console.log('[cloud] using wisp', wispUrl);
 
-      setStatus('loading proxy engine...');
+      setStatus('loading pr0xy engine...');
       const { ScramjetController } = $scramjetLoadController();
       scramjet = new ScramjetController({
         prefix: basePath + "scramjet/",

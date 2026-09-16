@@ -59,7 +59,7 @@ export default function GamePlayer({ game, onClose }) {
             <p>Loading {game.name}...</p>
             <span className="player-loading-hint">
               {isCloud
-                ? 'Cl0ud gaming tunnels through the wisp proxy \u2014 this can take a while and may need a login'
+                ? 'Cl0ud gaming tunnels through the wisp pr0xy \u2014 this can take a while and may need a login'
                 : 'Larger g4m3s may take a few seconds'}
             </span>
           </div>
