@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>fl1nt cl0ud</title>
+  <script src="./engine/scramjet.all.js" defer></script>
+  <script type="module">
+    import * as BareMux from "https://cdn.jsdelivr.net/npm/@mercuryworkshop/bare-mux/dist/index.mjs";
+    window.BareMux = BareMux;
+  </script>
+  <style>
+    :root { --accent:#e2c044; --text:#fdfdfd; --soft:#a1a1aa; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    html, body { height:100%; width:100%; overflow:hidden;
+      background: radial-gradient(circle at top, #1a1a20, #0d0d12 80%);
+      color: var(--text); font-family:'Inter', system-ui, sans-serif; }
+    #frame-host { position:fixed; inset:0; }
+    #frame-host iframe { width:100%; height:100%; border:none; background:#000; }
+    #overlay { position:fixed; inset:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:18px; text-align:center;
+      background: radial-gradient(circle at center, #16161d, #0d0d12); z-index:10;
+      transition: opacity .4s ease; padding:24px; }
+    #overlay.hidden { opacity:0; pointer-events:none; }
+    .spinner { width:44px; height:44px; border:3px solid rgba(255,255,255,.12);
+      border-top-color: var(--accent); border-radius:50%; animation:spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h1 { font-size:1.3rem; font-weight:700; }
+    p { color: var(--soft); font-size:.9rem; max-width:440px; line-height:1.5; }
+    .status { font-family: monospace; font-size:.8rem; color:var(--accent); }
+    .retry { margin-top:8px; padding:10px 18px; border-radius:12px; cursor:pointer;
+      background: rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.12);
+      color:var(--text); font-family:inherit; font-weight:600; }
+    .retry:hover { background: rgba(255,255,255,.12); }
+  </style>
+</head>
+<body>
+  <div id="frame-host"></div>
+  <div id="overlay">
+    <div class="spinner"></div>
+    <h1 id="ov-title">Connecting to fl1nt cl0ud</h1>
+    <p id="ov-text">Booting the proxy engine and tunnelling through the wisp network...</p>
+    <div class="status" id="ov-status"></div>
+  </div>
+
+  <script>
+    // Emergent Wisp servers (primary + fallback)
+    const WISP_SERVERS = [
+      { name: "Emergent Wisp 1", url: "wss://wisp-proxy.emergent.host/api/wisp" },
+      { name: "Emergent Wisp 2", url: "wss://wisp-proxy.emergent.host/api/wisp2" }
+    ];
+    const DEFAULT_WISP = WISP_SERVERS[0].url;
+    const EPOXY = "https://cdn.jsdelivr.net/npm/@mercuryworkshop/epoxy-transport@2.1.28/dist/index.mjs";
+
+    const basePath = location.pathname.replace(/[^/]*$/, '');
+    const $ = id => document.getElementById(id);
+    const setStatus = t => { $('ov-status').textContent = t; };
+
+    function getTarget() {
+      const hash = decodeURIComponent(location.hash.slice(1) || '');
+      return hash || 'https://now.gg/';
+    }
+
+    function pingWisp(url, timeout = 2500) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        try {
+          const ws = new WebSocket(url);
+          const t = setTimeout(() => { try { ws.close(); } catch {} resolve({ url, ok:false }); }, timeout);
+          ws.onopen = () => { clearTimeout(t); const l = Date.now()-start; try { ws.close(); } catch {} resolve({ url, ok:true, latency:l }); };
+          ws.onerror = () => { clearTimeout(t); try { ws.close(); } catch {} resolve({ url, ok:false }); };
+        } catch { resolve({ url, ok:false }); }
+      });
+    }
+
+    async function pickWisp() {
+      // Skip blocking browser-side pings (can hang in restricted networks).
+      // Use the primary wisp URL; the service worker auto-switches to wisp2 on failure.
+      setStatus('connecting via wisp...');
+      console.log('[cloud] using primary wisp, SW handles failover');
+      return DEFAULT_WISP;
+    }
+
+    let scramjet, connection;
+
+    async function boot() {
+      $('overlay').classList.remove('hidden');
+      console.log('[cloud] boot start, target=', getTarget());
+      const wispUrl = await pickWisp();
+      console.log('[cloud] using wisp', wispUrl);
+
+      setStatus('loading proxy engine...');
+      const { ScramjetController } = $scramjetLoadController();
+      scramjet = new ScramjetController({
+        prefix: basePath + "scramjet/",
+        files: {
+          wasm: basePath + "engine/scramjet.wasm.wasm",
+          all: basePath + "engine/scramjet.all.js",
+          sync: basePath + "engine/scramjet.sync.js"
+        }
+      });
+      await scramjet.init();
+      console.log('[cloud] scramjet init done');
+
+      setStatus('setting up transport...');
+      connection = new window.BareMux.BareMuxConnection(basePath + "bareworker.js");
+      await connection.setTransport(EPOXY, [{ wisp: wispUrl }]);
+      console.log('[cloud] transport set');
+
+      if ('serviceWorker' in navigator) {
+        const reg = await navigator.serviceWorker.register(basePath + 'sw.js', { scope: basePath });
+        await navigator.serviceWorker.ready;
+        console.log('[cloud] sw ready');
+        const cfg = { type: "config", wispurl: wispUrl, servers: WISP_SERVERS, autoswitch: true };
+        const send = () => (reg.active || navigator.serviceWorker.controller)?.postMessage(cfg);
+        send(); setTimeout(send, 500); setTimeout(send, 1500);
+        reg.update();
+      } else {
+        throw new Error("Service Workers are not available in this browser.");
+      }
+
+      setStatus('launching...');
+      const frame = scramjet.createFrame();
+      const host = $('frame-host');
+      host.innerHTML = '';
+      host.appendChild(frame.frame);
+      frame.frame.addEventListener('load', () => {
+        console.log('[cloud] frame loaded');
+        $('overlay').classList.add('hidden');
+      });
+      // fallback hide after a while even if load doesn't fire
+      setTimeout(() => $('overlay').classList.add('hidden'), 12000);
+      frame.go(getTarget());
+      console.log('[cloud] frame.go called');
+    }
+
+    function fail(err) {
+      $('overlay').classList.remove('hidden');
+      $('ov-title').textContent = "Couldn't start cl0ud gaming";
+      $('ov-text').innerHTML = (err?.message || 'Unknown error') +
+        "<br><br>Cloud platforms may block proxies or require a login. Try again or use a different network.";
+      setStatus('');
+      const btn = document.createElement('button');
+      btn.className = 'retry'; btn.textContent = 'Retry';
+      btn.onclick = () => location.reload();
+      $('overlay').appendChild(btn);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      // give deferred engine + module import a tick
+      const start = () => { if (window.$scramjetLoadController && window.BareMux) boot().catch(fail); else setTimeout(start, 120); };
+      start();
+    });
+  </script>
+</body>
+</html>
