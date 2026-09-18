@@ -1,7 +1,14 @@
 # ws-scrcpy streaming server (NetrisTV/ws-scrcpy) + adb
 FROM node:18-bullseye
 
-RUN apt-get update && apt-get install -y android-tools-adb git && rm -rf /var/lib/apt/lists/*
+# Install git + build tools, and Google's official platform-tools (adb) directly
+# (the distro adb package name differs across Debian/Ubuntu, so we fetch it from Google)
+RUN apt-get update && apt-get install -y git python3 build-essential curl unzip \
+ && curl -Lo /tmp/pt.zip https://dl.google.com/android/repository/platform-tools-latest-linux.zip \
+ && unzip -q /tmp/pt.zip -d /opt \
+ && ln -s /opt/platform-tools/adb /usr/local/bin/adb \
+ && rm -f /tmp/pt.zip \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt
 # ws-scrcpy streaming server (listens on 8000)
