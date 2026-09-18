@@ -46,11 +46,12 @@ async def geelark_post(path: str, body: dict) -> dict:
     import uuid as _uuid, time as _time, hashlib as _hashlib
     ts = str(int(_time.time() * 1000))
     nonce = _uuid.uuid4().hex[:6]
-    sign = _hashlib.sha256(f"{GEELARK_APP_ID}{ts}{nonce}{GEELARK_TOKEN}".encode()).hexdigest().upper()
+    trace = _uuid.uuid4().hex
+    sign = _hashlib.sha256(f"{GEELARK_APP_ID}{trace}{ts}{nonce}{GEELARK_TOKEN}".encode()).hexdigest().upper()
     headers = {
         "Content-Type": "application/json",
         "appId": GEELARK_APP_ID,
-        "traceId": _uuid.uuid4().hex,
+        "traceId": trace,
         "ts": ts,
         "nonce": nonce,
         "sign": sign,
@@ -189,51 +190,25 @@ async def _resolve_phone_id(requested: Optional[str]) -> str:
 
 @api_router.post("/cloudphone/start")
 async def cloudphone_start(req: StartPhoneRequest):
-    if not CLOUDPHONE_BRIDGE_URL:
-        raise HTTPException(status_code=503, detail="ws-scrcpy bridge URL not configured")
     phone_id = await _resolve_phone_id(req.phoneId)
 
     start = await geelark_post("/phone/start", {"ids": [phone_id]})
     details = (start.get("data") or {}).get("successDetails") or []
-    remote_url = details[0].get("url") if details else None
+    if not details:
+        raise HTTPException(status_code=502, detail=f"GeeLark could not start the phone: {start.get('msg')}")
+    remote_url = details[0].get("url")
 
-    # enable ADB + fetch connection info
-    await geelark_post("/phone/adb/status/set", {"id": phone_id, "status": 1})
-    adb = await geelark_post("/phone/adb/info", {"id": phone_id})
-    adb_data = adb.get("data") or {}
-    adb_address = adb_data.get("adbAddress")
-    debug_port = adb_data.get("debugPort")
-
-    # optionally auto-launch Roblox
+    # optionally auto-launch Roblox once the phone is up
     if GEELARK_ROBLOX_PKG:
         try:
             await geelark_post("/phone/app/start", {"id": phone_id, "packageName": GEELARK_ROBLOX_PKG})
         except Exception as e:
             logger.warning(f"roblox app start failed: {e}")
 
-    # ask the bridge to `adb connect` this phone, then build the stream URL
-    stream_url = None
-    udid = None
-    if adb_address:
-        udid = f"{adb_address}:{debug_port}" if debug_port and ":" not in str(adb_address) else str(adb_address)
-        try:
-            assert http_client is not None
-            await http_client.post(f"{CLOUDPHONE_BRIDGE_URL}/connect",
-                                   json={"address": udid}, timeout=20)
-        except Exception as e:
-            logger.warning(f"bridge connect failed: {e}")
-        stream_url = (f"{CLOUDPHONE_BRIDGE_URL}/#!action=stream"
-                      f"&udid={udid}&player=broadway&ws="
-                      f"{CLOUDPHONE_BRIDGE_URL.replace('https://','wss://').replace('http://','ws://')}/"
-                      f"?action=proxy-adb&remote=tcp%3A8886&udid={udid}")
-
     return {
         "phoneId": phone_id,
+        "streamUrl": remote_url,
         "remoteUrl": remote_url,
-        "adbAddress": adb_address,
-        "debugPort": debug_port,
-        "udid": udid,
-        "streamUrl": stream_url,
     }
 
 
