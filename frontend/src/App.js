@@ -6,6 +6,7 @@ import './components/GamePlayer.css';
 import ParticleField from './components/ParticleField';
 import GameTile from './components/GameTile';
 import GamePlayer from './components/GamePlayer';
+import CloudPhonePlayer from './components/CloudPhonePlayer';
 import { leet } from './lib/leet';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -177,7 +178,11 @@ function App() {
         <div className="footer">fl1nt g4m3s &middot; g4m3s served straight from the backend</div>
       </div>
 
-      {playing && <GamePlayer game={playing} onClose={() => setPlaying(null)} />}
+      {playing && (
+        playing.type === 'cloudphone'
+          ? <CloudPhonePlayer game={playing} onClose={() => setPlaying(null)} />
+          : <GamePlayer game={playing} onClose={() => setPlaying(null)} />
+      )}
     </div>
   );
 }

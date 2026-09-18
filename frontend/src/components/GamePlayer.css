@@ -26,7 +26,26 @@
   color: var(--text);
 }
 .player-dot { width: 12px; height: 12px; border-radius: 4px; }
-.player-actions { display: flex; gap: 10px; }
+.player-actions { display: flex; gap: 10px; align-items: center; }
+.session-timer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-weight: 700;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+}
+.session-timer.low {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+.player-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 .player-actions button {
   display: inline-flex;
   align-items: center;

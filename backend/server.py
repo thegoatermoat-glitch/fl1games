@@ -40,6 +40,7 @@ class Game(BaseModel):
     image: Optional[str] = None
     type: str = "embed"
     target: Optional[str] = None
+    provider: Optional[str] = None
 
 
 class GameListResponse(BaseModel):
