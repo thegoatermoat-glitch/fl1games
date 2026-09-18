@@ -1,0 +1,11 @@
+services:
+  cloudphone-bridge:
+    build: .
+    container_name: fl1nt-cloudphone-bridge
+    ports:
+      - "8080:8080"          # public HTTP entrypoint (put HTTPS in front of this)
+    environment:
+      PORT: "8080"
+      WS_SCRCPY_URL: "http://127.0.0.1:8000"
+      ALLOW_ORIGIN: "*"       # tighten to your fl1nt backend origin in production
+    restart: unless-stopped

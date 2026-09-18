@@ -1,0 +1,11 @@
+{
+  "name": "fl1nt-cloudphone-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "main": "bridge-server.js",
+  "scripts": { "start": "node bridge-server.js" },
+  "dependencies": {
+    "express": "^4.19.2",
+    "http-proxy": "^1.18.1"
+  }
+}
