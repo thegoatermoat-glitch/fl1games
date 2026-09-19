@@ -6,7 +6,9 @@ from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import json
 import logging
+import asyncio
 import httpx
+from datetime import datetime, timedelta
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional
@@ -224,6 +226,123 @@ async def cloudphone_status(phoneId: Optional[str] = None):
     phone_id = await _resolve_phone_id(phoneId)
     data = await geelark_post("/phone/status", {"ids": [phone_id]})
     return {"phoneId": phone_id, "data": data.get("data"), "code": data.get("code")}
+
+
+# ---------- Cloud phone session manager (30-min sessions, 20 slots, queue) ----------
+MAX_SLOTS = 20
+SESSION_SECONDS = 30 * 60      # 30 minutes per session
+HEARTBEAT_TIMEOUT = 45         # seconds without heartbeat -> session dropped
+
+_cloud_lock = asyncio.Lock()
+_phone_started = {"on": False}
+
+
+class SessionReq(BaseModel):
+    clientId: str
+
+
+async def _ensure_phone_started():
+    phone_id = await _resolve_phone_id(None)
+    start = await geelark_post("/phone/start", {"ids": [phone_id]})
+    details = (start.get("data") or {}).get("successDetails") or []
+    _phone_started["on"] = True
+    return details[0].get("url") if details else None
+
+
+async def _ensure_phone_stopped():
+    if not _phone_started["on"]:
+        return
+    try:
+        phone_id = await _resolve_phone_id(None)
+        await geelark_post("/phone/stop", {"ids": [phone_id]})
+    except Exception as e:
+        logger.warning(f"phone stop failed: {e}")
+    finally:
+        _phone_started["on"] = False
+
+
+async def _reconcile():
+    now = datetime.utcnow()
+    hb_cutoff = now - timedelta(seconds=HEARTBEAT_TIMEOUT)
+    exp_cutoff = now - timedelta(seconds=SESSION_SECONDS)
+    # drop abandoned (no recent heartbeat) and expired active sessions
+    await db.cloud_sessions.delete_many({"lastSeen": {"$lt": hb_cutoff}})
+    await db.cloud_sessions.delete_many({"status": "active", "startedAt": {"$lt": exp_cutoff}})
+    # promote queued -> active while slots are free (FIFO)
+    active = await db.cloud_sessions.count_documents({"status": "active"})
+    if active < MAX_SLOTS:
+        need = MAX_SLOTS - active
+        queued = await db.cloud_sessions.find({"status": "queued"}).sort("joinedAt", 1).limit(need).to_list(need)
+        for q in queued:
+            await db.cloud_sessions.update_one(
+                {"clientId": q["clientId"]},
+                {"$set": {"status": "active", "startedAt": now, "urlIssued": False}})
+        active = await db.cloud_sessions.count_documents({"status": "active"})
+    # lifecycle: stop the shared phone when nobody is active
+    if active == 0 and _phone_started["on"]:
+        await _ensure_phone_stopped()
+
+
+async def _status_for(client_id: str) -> dict:
+    sess = await db.cloud_sessions.find_one({"clientId": client_id})
+    if not sess:
+        return {"status": "none", "maxSlots": MAX_SLOTS}
+    if sess["status"] == "queued":
+        pos = await db.cloud_sessions.count_documents(
+            {"status": "queued", "joinedAt": {"$lt": sess["joinedAt"]}}) + 1
+        active = await db.cloud_sessions.count_documents({"status": "active"})
+        return {"status": "queued", "position": pos, "activeCount": active, "maxSlots": MAX_SLOTS}
+    # active
+    started = sess.get("startedAt") or datetime.utcnow()
+    remaining = max(0, int(SESSION_SECONDS - (datetime.utcnow() - started).total_seconds()))
+    resp = {"status": "active", "remainingSeconds": remaining, "maxSlots": MAX_SLOTS}
+    if not sess.get("urlIssued"):
+        try:
+            url = await _ensure_phone_started()
+            await db.cloud_sessions.update_one({"clientId": client_id}, {"$set": {"urlIssued": True}})
+            if url:
+                resp["streamUrl"] = url
+        except Exception as e:
+            logger.warning(f"issue url failed: {e}")
+    return resp
+
+
+@api_router.post("/cloudphone/session/join")
+async def session_join(req: SessionReq):
+    async with _cloud_lock:
+        now = datetime.utcnow()
+        existing = await db.cloud_sessions.find_one({"clientId": req.clientId})
+        if not existing:
+            await db.cloud_sessions.insert_one(
+                {"clientId": req.clientId, "status": "queued", "joinedAt": now, "lastSeen": now})
+        else:
+            await db.cloud_sessions.update_one({"clientId": req.clientId}, {"$set": {"lastSeen": now}})
+        await _reconcile()
+        return await _status_for(req.clientId)
+
+
+@api_router.post("/cloudphone/session/heartbeat")
+async def session_heartbeat(req: SessionReq):
+    async with _cloud_lock:
+        await db.cloud_sessions.update_one({"clientId": req.clientId}, {"$set": {"lastSeen": datetime.utcnow()}})
+        await _reconcile()
+        return await _status_for(req.clientId)
+
+
+@api_router.post("/cloudphone/session/leave")
+async def session_leave(req: SessionReq):
+    async with _cloud_lock:
+        await db.cloud_sessions.delete_one({"clientId": req.clientId})
+        await _reconcile()
+        return {"left": True}
+
+
+@api_router.get("/cloudphone/session/stats")
+async def session_stats():
+    active = await db.cloud_sessions.count_documents({"status": "active"})
+    queued = await db.cloud_sessions.count_documents({"status": "queued"})
+    return {"active": active, "queued": queued, "maxSlots": MAX_SLOTS, "sessionSeconds": SESSION_SECONDS}
+
 
 
 
