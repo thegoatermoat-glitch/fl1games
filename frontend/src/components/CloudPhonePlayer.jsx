@@ -88,8 +88,12 @@ export default function CloudPhonePlayer({ game, onClose }) {
       .then(({ data }) => {
         if (cancelled) return;
         phoneIdRef.current = data.phoneId;
-        if (data.streamUrl) setStreamUrl(data.streamUrl);
-        else setError('The phone started but no stream URL was returned by the bridge.');
+        if (data.streamUrl) {
+          // route the GeeLark viewer through the Scramjet/Wisp pr0xy so it works on blocked networks
+          setStreamUrl(`/cloud/#${encodeURIComponent(data.streamUrl)}`);
+        } else {
+          setError('The phone started but no stream URL was returned.');
+        }
       })
       .catch((err) => {
         if (cancelled) return;
