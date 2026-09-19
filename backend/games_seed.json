@@ -1,12 +1,36 @@
 [
  {
   "slug": "roblox-cloud",
-  "name": "Roblox (Cl0ud Phone)",
+  "name": "Cl0ud Ph0n3",
   "category": "Cl0ud Gaming",
   "colorA": "#ffffff",
   "colorB": "#f2f2f2",
-  "monogram": "RB",
-  "image": "/covers/roblox.jpg",
+  "monogram": "CP",
+  "image": "/covers/cloudphone.webp",
+  "type": "cloudphone",
+  "target": "",
+  "provider": "geelark"
+ },
+ {
+  "slug": "minecraft-cloud",
+  "name": "Minecraft (Cl0ud Ph0n3)",
+  "category": "Cl0ud Gaming",
+  "colorA": "#7cbb56",
+  "colorB": "#3f6d2a",
+  "monogram": "MC",
+  "image": "/covers/minecraft.png",
+  "type": "cloudphone",
+  "target": "",
+  "provider": "geelark"
+ },
+ {
+  "slug": "terraria-cloud",
+  "name": "Terraria (Cl0ud Ph0n3)",
+  "category": "Cl0ud Gaming",
+  "colorA": "#6fb1e0",
+  "colorB": "#2a5b8f",
+  "monogram": "TR",
+  "image": "/covers/terraria.webp",
   "type": "cloudphone",
   "target": "",
   "provider": "geelark"
