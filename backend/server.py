@@ -234,41 +234,80 @@ SESSION_SECONDS = 30 * 60      # 30 minutes per session
 HEARTBEAT_TIMEOUT = 45         # seconds without heartbeat -> session dropped
 
 _cloud_lock = asyncio.Lock()
-_phone_started = {"on": False}
+GEELARK_MOBILE_TYPE = os.environ.get("GEELARK_MOBILE_TYPE", "Android 12").strip()
+_proxy_cache = {"list": [], "idx": 0}
 
 
 class SessionReq(BaseModel):
     clientId: str
 
 
-async def _ensure_phone_started():
-    phone_id = await _resolve_phone_id(None)
+async def _get_proxy_info():
+    """Round-robin a proxy URL from the account's proxy list (required to create phones)."""
+    if not _proxy_cache["list"]:
+        r = await geelark_post("/proxy/list", {"page": 1, "pageSize": 50})
+        _proxy_cache["list"] = (r.get("data") or {}).get("list") or []
+    lst = _proxy_cache["list"]
+    if not lst:
+        return None
+    p = lst[_proxy_cache["idx"] % len(lst)]
+    _proxy_cache["idx"] += 1
+    return f'{p["scheme"]}://{p["username"]}:{p["password"]}@{p["server"]}:{p["port"]}'
+
+
+async def _create_and_start_phone(client_id: str):
+    """Create a brand-new cloud phone for this user, start it, return (phoneId, viewerUrl)."""
+    proxy = await _get_proxy_info()
+    row = {"profileName": f"fl1nt-{client_id[:12]}"}
+    if proxy:
+        row["proxyInformation"] = proxy
+    created = await geelark_post("/phone/addNew", {
+        "mobileType": GEELARK_MOBILE_TYPE,
+        "chargeMode": 0,
+        "data": [row],
+    })
+    details = (created.get("data") or {}).get("details") or []
+    if not details or not details[0].get("id"):
+        emsg = details[0].get("msg") if details else created.get("msg")
+        raise RuntimeError(f"addNew failed: {emsg}")
+    phone_id = details[0]["id"]
     start = await geelark_post("/phone/start", {"ids": [phone_id]})
-    details = (start.get("data") or {}).get("successDetails") or []
-    _phone_started["on"] = True
-    return details[0].get("url") if details else None
+    sdetails = (start.get("data") or {}).get("successDetails") or []
+    url = sdetails[0].get("url") if sdetails else None
+    return phone_id, url
 
 
-async def _ensure_phone_stopped():
-    if not _phone_started["on"]:
+async def _destroy_phone(phone_id: str):
+    if not phone_id:
         return
     try:
-        phone_id = await _resolve_phone_id(None)
         await geelark_post("/phone/stop", {"ids": [phone_id]})
     except Exception as e:
-        logger.warning(f"phone stop failed: {e}")
-    finally:
-        _phone_started["on"] = False
+        logger.warning(f"phone stop failed {phone_id}: {e}")
+    try:
+        await geelark_post("/phone/delete", {"ids": [phone_id]})
+    except Exception as e:
+        logger.warning(f"phone delete failed {phone_id}: {e}")
+
+
+async def _drop_sessions(query: dict):
+    """Delete session docs matching query, tearing down each user's dedicated phone."""
+    docs = await db.cloud_sessions.find(query).to_list(1000)
+    for d in docs:
+        if d.get("phoneId"):
+            await _destroy_phone(d["phoneId"])
+    if docs:
+        await db.cloud_sessions.delete_many({"clientId": {"$in": [d["clientId"] for d in docs]}})
 
 
 async def _reconcile():
     now = datetime.utcnow()
     hb_cutoff = now - timedelta(seconds=HEARTBEAT_TIMEOUT)
     exp_cutoff = now - timedelta(seconds=SESSION_SECONDS)
-    # drop abandoned (no recent heartbeat) and expired active sessions
-    await db.cloud_sessions.delete_many({"lastSeen": {"$lt": hb_cutoff}})
-    await db.cloud_sessions.delete_many({"status": "active", "startedAt": {"$lt": exp_cutoff}})
-    # promote queued -> active while slots are free (FIFO)
+    # tear down abandoned (no recent heartbeat) and expired active sessions (+ their phones)
+    await _drop_sessions({"lastSeen": {"$lt": hb_cutoff}})
+    await _drop_sessions({"status": "active", "startedAt": {"$lt": exp_cutoff}})
+    # promote queued -> active while slots are free (FIFO); phone is created lazily in _status_for
     active = await db.cloud_sessions.count_documents({"status": "active"})
     if active < MAX_SLOTS:
         need = MAX_SLOTS - active
@@ -277,10 +316,6 @@ async def _reconcile():
             await db.cloud_sessions.update_one(
                 {"clientId": q["clientId"]},
                 {"$set": {"status": "active", "startedAt": now, "urlIssued": False}})
-        active = await db.cloud_sessions.count_documents({"status": "active"})
-    # lifecycle: stop the shared phone when nobody is active
-    if active == 0 and _phone_started["on"]:
-        await _ensure_phone_stopped()
 
 
 async def _status_for(client_id: str) -> dict:
@@ -298,12 +333,14 @@ async def _status_for(client_id: str) -> dict:
     resp = {"status": "active", "remainingSeconds": remaining, "maxSlots": MAX_SLOTS}
     if not sess.get("urlIssued"):
         try:
-            url = await _ensure_phone_started()
-            await db.cloud_sessions.update_one({"clientId": client_id}, {"$set": {"urlIssued": True}})
+            phone_id, url = await _create_and_start_phone(client_id)
+            await db.cloud_sessions.update_one(
+                {"clientId": client_id}, {"$set": {"urlIssued": True, "phoneId": phone_id}})
             if url:
                 resp["streamUrl"] = url
         except Exception as e:
-            logger.warning(f"issue url failed: {e}")
+            logger.warning(f"create/start phone failed: {e}")
+            resp["error"] = "Could not create a new cl0ud phone."
     return resp
 
 
@@ -332,7 +369,7 @@ async def session_heartbeat(req: SessionReq):
 @api_router.post("/cloudphone/session/leave")
 async def session_leave(req: SessionReq):
     async with _cloud_lock:
-        await db.cloud_sessions.delete_one({"clientId": req.clientId})
+        await _drop_sessions({"clientId": req.clientId})
         await _reconcile()
         return {"left": True}
 
