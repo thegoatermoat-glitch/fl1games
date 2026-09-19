@@ -38,6 +38,8 @@ export default function GamePlayer({ game, onClose }) {
     }
   } else if (game.type === 'cloud') {
     src = `/cloud/#${encodeURIComponent(game.target)}&r=${reloadKey}`;
+  } else if (game.type === 'external') {
+    src = game.target;
   } else {
     src = `${API}/games/${game.slug}/play?r=${reloadKey}`;
   }

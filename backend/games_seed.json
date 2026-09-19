@@ -5546,5 +5546,27 @@
   "image": null,
   "type": "embed",
   "target": null
+ },
+ {
+  "slug": "undertale",
+  "name": "Undertale",
+  "category": "Adventure",
+  "colorA": "#e11d48",
+  "colorB": "#881337",
+  "monogram": "UT",
+  "image": null,
+  "type": "external",
+  "target": "https://wigdos-inc.github.io/Undertale-HTML/"
+ },
+ {
+  "slug": "amanda-the-adventurer",
+  "name": "Amanda The Adventurer",
+  "category": "Adventure",
+  "colorA": "#16a34a",
+  "colorB": "#14532d",
+  "monogram": "AA",
+  "image": null,
+  "type": "external",
+  "target": "https://nikithakv2025-art.github.io/amanda-the-adventurer/"
  }
 ]
