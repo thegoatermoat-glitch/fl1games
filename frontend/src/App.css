@@ -170,6 +170,11 @@
   object-fit: cover;
   z-index: 1;
 }
+.tile-img.contain {
+  object-fit: contain;
+  padding: 12px;
+  background: #ffffff;
+}
 .tile:hover .tile-icon {
   transform: translateY(-6px);
   box-shadow: 0 16px 30px rgba(0,0,0,0.5);

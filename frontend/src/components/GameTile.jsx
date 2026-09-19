@@ -21,7 +21,7 @@ export default function GameTile({ game, index, onPlay, isFav, onToggleFav }) {
         />
         {showImg ? (
           <img
-            className="tile-img"
+            className={`tile-img ${game.type === 'cloudphone' ? 'contain' : ''}`}
             src={game.image}
             alt={game.name}
             loading="lazy"
