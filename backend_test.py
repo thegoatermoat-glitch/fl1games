@@ -6,6 +6,9 @@ Tests all backend endpoints with comprehensive validation
 import requests
 import sys
 import os
+import time
+import base64
+import json
 from typing import Dict, Any, List
 
 # Get base URL from frontend .env
@@ -296,6 +299,231 @@ def test_game_play_proxy():
     
     return all(results)
 
+def test_cloudphone_config():
+    """Test 9: GET /api/cloudphone/config returns configuration status"""
+    print(f"\n{Colors.BOLD}Test 9: Cloud Phone Config{Colors.RESET}")
+    try:
+        resp = requests.get(f"{BASE_URL}/cloudphone/config", timeout=10)
+        data = resp.json()
+        
+        status_ok = resp.status_code == 200
+        print_test("Status code 200", status_ok)
+        
+        geelark_configured = data.get('geelarkConfigured') == True
+        print_test("geelarkConfigured is true", geelark_configured, 
+                   f"Got: {data.get('geelarkConfigured')}")
+        
+        app_id_present = data.get('appIdPresent') == True
+        print_test("appIdPresent is true", app_id_present, 
+                   f"Got: {data.get('appIdPresent')}")
+        
+        api_key_present = data.get('apiKeyPresent') == True
+        print_test("apiKeyPresent is true", api_key_present, 
+                   f"Got: {data.get('apiKeyPresent')}")
+        
+        return status_ok and geelark_configured and app_id_present and api_key_present
+    except Exception as e:
+        return print_test("Cloud phone config test", False, f"Error: {str(e)}")
+
+def test_cloudphone_phones():
+    """Test 10: POST /api/cloudphone/phones returns phone list"""
+    print(f"\n{Colors.BOLD}Test 10: Cloud Phone List{Colors.RESET}")
+    try:
+        resp = requests.post(f"{BASE_URL}/cloudphone/phones", json={}, timeout=15)
+        data = resp.json()
+        
+        status_ok = resp.status_code == 200
+        print_test("Status code 200", status_ok)
+        
+        raw_code = data.get('raw_code')
+        code_ok = raw_code == 0
+        print_test("raw_code == 0 (success)", code_ok, f"Got: {raw_code}")
+        
+        phones = data.get('phones', [])
+        has_phones = len(phones) > 0
+        print_test("phones list is non-empty", has_phones, f"Got {len(phones)} phone(s)")
+        
+        if phones:
+            first_phone = phones[0]
+            has_id = bool('id' in first_phone and first_phone['id'])
+            print_test("First phone has 'id' field", has_id, 
+                       f"Phone ID: {first_phone.get('id', 'N/A')}")
+        else:
+            has_id = False
+            print_test("First phone has 'id' field", False, "No phones returned")
+        
+        return status_ok and code_ok and has_phones and has_id
+    except Exception as e:
+        return print_test("Cloud phone list test", False, f"Error: {str(e)}")
+
+def decode_jwt_payload(token: str) -> dict:
+    """Decode JWT token payload (middle segment)"""
+    parts = token.split('.')
+    if len(parts) != 3:
+        raise ValueError(f"Invalid JWT format: expected 3 parts, got {len(parts)}")
+    
+    # Get the payload (middle part)
+    payload_b64 = parts[1]
+    
+    # Add padding if needed
+    padding = 4 - (len(payload_b64) % 4)
+    if padding != 4:
+        payload_b64 += '=' * padding
+    
+    # Decode base64url (replace - with + and _ with /)
+    payload_b64 = payload_b64.replace('-', '+').replace('_', '/')
+    payload_bytes = base64.b64decode(payload_b64)
+    
+    # Parse JSON
+    return json.loads(payload_bytes.decode('utf-8'))
+
+def test_cloudphone_start_stop():
+    """Test 11: POST /api/cloudphone/start and /api/cloudphone/stop
+    CRITICAL: This boots a REAL cloud phone that costs money!
+    Call start ONCE and immediately call stop.
+    """
+    print(f"\n{Colors.BOLD}Test 11: Cloud Phone Start/Stop (REAL PHONE - COSTS MONEY){Colors.RESET}")
+    print(f"{Colors.YELLOW}⚠️  WARNING: Starting a real GeeLark cloud phone...{Colors.RESET}")
+    
+    phone_id = None
+    start_success = False
+    
+    try:
+        # Test START
+        current_time = time.time()
+        resp = requests.post(f"{BASE_URL}/cloudphone/start", json={}, timeout=30)
+        data = resp.json()
+        
+        status_ok = resp.status_code == 200
+        print_test("Start: Status code 200", status_ok, f"Got: {resp.status_code}")
+        
+        if not status_ok:
+            print(f"{Colors.RED}Start failed with status {resp.status_code}: {data}{Colors.RESET}")
+            return False
+        
+        phone_id = data.get('phoneId')
+        stream_url = data.get('streamUrl', '')
+        
+        has_stream_url = bool(stream_url)
+        print_test("Start: streamUrl is non-empty", has_stream_url, 
+                   f"URL length: {len(stream_url)}")
+        
+        starts_correct = stream_url.startswith('https://phone.geelark.com/')
+        print_test("Start: streamUrl starts with 'https://phone.geelark.com/'", starts_correct,
+                   f"URL prefix: {stream_url[:50] if stream_url else 'N/A'}...")
+        
+        # Extract and decode JWT token from query parameter
+        token_valid = False
+        timestamp_delta = None
+        
+        if stream_url:
+            try:
+                # Parse URL to get token query parameter
+                from urllib.parse import urlparse, parse_qs
+                parsed = urlparse(stream_url)
+                query_params = parse_qs(parsed.query)
+                token = query_params.get('token', [None])[0]
+                
+                if token:
+                    print(f"  Token found in URL (length: {len(token)})")
+                    
+                    # Decode JWT payload
+                    payload = decode_jwt_payload(token)
+                    print(f"  JWT payload decoded: {payload}")
+                    
+                    # Extract 'e' field with format "phoneId.timestamp"
+                    e_field = payload.get('e', '')
+                    if '.' in e_field:
+                        parts = e_field.rsplit('.', 1)
+                        timestamp_str = parts[-1]
+                        token_timestamp = int(timestamp_str)
+                        
+                        # Calculate delta
+                        timestamp_delta = abs(current_time - token_timestamp)
+                        
+                        # Check if within 120 seconds
+                        token_valid = timestamp_delta <= 120
+                        
+                        print_test("Start: Token timestamp within 120 seconds", token_valid,
+                                   f"Delta: {timestamp_delta:.1f} seconds (issued at: {token_timestamp}, current: {int(current_time)})")
+                    else:
+                        print_test("Start: Token 'e' field format", False, 
+                                   f"Expected 'phoneId.timestamp', got: {e_field}")
+                else:
+                    print_test("Start: Token extraction", False, "No 'token' query parameter found")
+            except Exception as e:
+                print_test("Start: Token decode/validation", False, f"Error: {str(e)}")
+        
+        start_success = status_ok and has_stream_url and starts_correct and token_valid
+        
+    except Exception as e:
+        print_test("Cloud phone start test", False, f"Error: {str(e)}")
+        start_success = False
+    
+    # ALWAYS try to stop the phone, even if start failed
+    stop_success = False
+    try:
+        print(f"\n{Colors.YELLOW}⚠️  Stopping cloud phone...{Colors.RESET}")
+        stop_resp = requests.post(f"{BASE_URL}/cloudphone/stop", json={}, timeout=30)
+        stop_data = stop_resp.json()
+        
+        stop_status_ok = stop_resp.status_code == 200
+        print_test("Stop: Status code 200", stop_status_ok, f"Got: {stop_resp.status_code}")
+        
+        stopped = stop_data.get('stopped') == True
+        print_test("Stop: 'stopped' field is true", stopped, 
+                   f"Response: {stop_data}")
+        
+        stop_success = stop_status_ok and stopped
+        
+    except Exception as e:
+        print_test("Cloud phone stop test", False, f"Error: {str(e)}")
+        stop_success = False
+    
+    return start_success and stop_success
+
+def test_games_total_updated():
+    """Test 12: Verify games total is now 301 (Fortnite removed)"""
+    print(f"\n{Colors.BOLD}Test 12: Games Total Updated (301){Colors.RESET}")
+    try:
+        resp = requests.get(f"{BASE_URL}/games", timeout=10)
+        data = resp.json()
+        
+        status_ok = resp.status_code == 200
+        print_test("Status code 200", status_ok)
+        
+        total = data.get('total', 0)
+        total_ok = total == 301
+        print_test("Total is 301 (Fortnite removed)", total_ok, f"Got: {total}")
+        
+        return status_ok and total_ok
+    except Exception as e:
+        return print_test("Games total test", False, f"Error: {str(e)}")
+
+def test_cloud_gaming_category_updated():
+    """Test 13: Verify Cl0ud Gaming category has count 1 (only Roblox)"""
+    print(f"\n{Colors.BOLD}Test 13: Cl0ud Gaming Category Updated (count=1){Colors.RESET}")
+    try:
+        resp = requests.get(f"{BASE_URL}/categories", timeout=10)
+        data = resp.json()
+        
+        status_ok = resp.status_code == 200
+        print_test("Status code 200", status_ok)
+        
+        categories = data.get('categories', [])
+        cat_dict = {c['name']: c['count'] for c in categories}
+        
+        if 'Cl0ud Gaming' in cat_dict:
+            count = cat_dict['Cl0ud Gaming']
+            count_ok = count == 1
+            print_test("Cl0ud Gaming count is 1", count_ok, f"Got: {count}")
+            return status_ok and count_ok
+        else:
+            print_test("Cl0ud Gaming category exists", False, "Category not found")
+            return False
+    except Exception as e:
+        return print_test("Cloud gaming category test", False, f"Error: {str(e)}")
+
 def main():
     print(f"\n{Colors.BOLD}{'='*60}{Colors.RESET}")
     print(f"{Colors.BOLD}fl1nt g4m3s Backend API Test Suite{Colors.RESET}")
@@ -313,6 +541,15 @@ def main():
     results.append(test_categories_endpoint())
     results.append(test_single_game())
     results.append(test_game_play_proxy())
+    
+    # NEW: GeeLark cloud phone tests
+    results.append(test_cloudphone_config())
+    results.append(test_cloudphone_phones())
+    results.append(test_cloudphone_start_stop())  # CRITICAL: Costs money!
+    
+    # NEW: Verify updated game counts
+    results.append(test_games_total_updated())
+    results.append(test_cloud_gaming_category_updated())
     
     # Summary
     print(f"\n{Colors.BOLD}{'='*60}{Colors.RESET}")

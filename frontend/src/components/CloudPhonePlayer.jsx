@@ -89,8 +89,10 @@ export default function CloudPhonePlayer({ game, onClose }) {
         if (cancelled) return;
         phoneIdRef.current = data.phoneId;
         if (data.streamUrl) {
-          // route the GeeLark viewer through the Scramjet/Wisp pr0xy so it works on blocked networks
-          setStreamUrl(`/cloud/#${encodeURIComponent(data.streamUrl)}`);
+          // Load GeeLark's viewer directly. Its session token is short-lived, so it must
+          // be used immediately — routing through the Scramjet/Wisp launcher adds boot
+          // latency that expires the token ("token has expired").
+          setStreamUrl(data.streamUrl);
         } else {
           setError('The phone started but no stream URL was returned.');
         }

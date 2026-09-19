@@ -161,6 +161,39 @@ backend:
         - working: true
           agent: "testing"
           comment: "✓ PASSED all proxy tests: (1) GET /api/games/2048/play returns 200 with content-type 'text/html; charset=utf-8' and valid HTML content. (2) GET /api/games/google-dino/play returns 200 with HTML. (3) GET /api/games/minesweeper/play returns 200 with HTML. (4) GET /api/games/nope/play correctly returns 404 for invalid slug. Streaming works correctly with proper timeout handling for large files."
+  - task: "GeeLark cloud phone configuration endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "✓ PASSED: GET /api/cloudphone/config returns 200 with geelarkConfigured=true, appIdPresent=true, apiKeyPresent=true. GeeLark credentials are properly configured."
+  - task: "GeeLark cloud phone list endpoint"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "✓ PASSED: POST /api/cloudphone/phones returns 200 with raw_code=0 (success) and non-empty phones list with valid phone IDs. GeeLark signature authentication is working correctly."
+  - task: "GeeLark cloud phone start/stop endpoints (token expiry bug fix)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "✓ PASSED BUG FIX VERIFIED: POST /api/cloudphone/start returns 200 with streamUrl starting with 'https://phone.geelark.com/'. JWT token decoded successfully - payload contains 'e' field with format 'phoneId.timestamp'. Token timestamp is FRESH (0.7 seconds delta from current time, well within 120 second threshold). The 'token has expired' bug is FIXED. POST /api/cloudphone/stop returns 200 with stopped=true. Cloud phone was started and stopped successfully (costs user money, called only once as instructed)."
 
 frontend:
   - task: "Games grid, search, categories, favorites, modal player"
@@ -178,21 +211,22 @@ frontend:
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
   current_focus:
-    - "List games with search + category filter + pagination"
-    - "Game play proxy (stream HTML as text/html)"
-    - "Categories endpoint"
-    - "Single game metadata"
+    - "GeeLark cloud phone start/stop endpoints (token expiry bug fix)"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-      message: "Please test the backend API only (do not use curl per instructions -> use the deep testing harness). Base URL is the external REACT_APP_BACKEND_URL with /api prefix. Validate: (1) GET /api/games returns total 302 and paginates via skip/limit (limit cap 400); (2) q= search is case-insensitive substring on name; (3) category= filter works incl. 'Cl0ud Gaming' (2 games) and 'All' returns everything; (4) GET /api/categories total=302 with 10 categories; (5) GET /api/games/{slug} returns object and 404 for bad slug; (6) GET /api/games/{slug}/play returns 200 text/html for a few known slugs (e.g. 2048, google-dino, minesweeper) and 404 for bad slug. Note: some game source files are very large (streamed) so use a reasonable timeout; just confirm status + content-type, no need to download fully."
+      message: "BUG FIX VERIFICATION NEEDED (GeeLark cloud phone 'token has expired'). Test these backend endpoints (external REACT_APP_BACKEND_URL + /api). IMPORTANT: /cloudphone/start boots a real GeeLark cloud phone (costs the user minutes) so call start AT MOST ONCE and then immediately call /cloudphone/stop. Tests: (1) GET /api/cloudphone/config -> geelarkConfigured true, appIdPresent true. (2) POST /api/cloudphone/phones -> raw_code 0 (success) and returns >=1 phone with an id (proves GeeLark signature auth works). (3) POST /api/cloudphone/start {} -> 200 with a non-empty streamUrl starting 'https://phone.geelark.com/'. Decode the JWT 'token' query param from streamUrl: base64url-decode the middle segment; it has field 'e' formatted 'phoneId.timestamp'. Confirm that timestamp (issued-at) is within ~120 seconds of current epoch time (i.e. the token is freshly issued, NOT stale/expired). (4) POST /api/cloudphone/stop {} -> {\"stopped\": true}. Report pass/fail per step. Do NOT call start multiple times."
+    - agent: "main"
+      message: "Earlier games API test (302 games etc.) still applies for the core catalogue; note total is now 301 (Fortnite removed)."
     - agent: "testing"
       message: "✅ BACKEND TESTING COMPLETE - ALL TESTS PASSED (8/8). Created comprehensive test suite in /app/backend_test.py using requests library (not curl as instructed). Tested all backend endpoints against https://fl1nt-arcade.preview.emergentagent.com/api. All 4 backend tasks verified working: (1) Games list with search, category filter, and pagination - all working correctly with proper validation. (2) Categories endpoint returns correct total and 10 categories with accurate counts. (3) Single game metadata endpoint works with proper 404 handling. (4) Game play proxy successfully streams HTML for multiple games (2048, google-dino, minesweeper) with correct content-type and 404 for invalid slugs. Backend is production-ready. No issues found."
+    - agent: "testing"
+      message: "✅ GEELARK CLOUD PHONE BUG FIX VERIFIED - ALL TESTS PASSED (5/5). Extended backend_test.py with 5 new tests for GeeLark cloud phone integration. Test results: (1) GET /api/cloudphone/config ✓ PASSED - geelarkConfigured=true, appIdPresent=true, apiKeyPresent=true. (2) POST /api/cloudphone/phones ✓ PASSED - raw_code=0 (success), returned 1 phone with ID 637803226011336925, signature auth working. (3) POST /api/cloudphone/start ✓ PASSED - returned streamUrl='https://phone.geelark.com/index.html?isApi=true&ta...' (376 chars). JWT token decoded successfully: payload={'u': '637931710176034865', 't': '637931710176100401', 'e': '637803226011336925.1789780635'}. Token timestamp 1789780635 is FRESH with delta of 0.7 seconds from current time (well within 120 second threshold). THE 'TOKEN HAS EXPIRED' BUG IS FIXED. (4) POST /api/cloudphone/stop ✓ PASSED - returned {stopped: true, phoneId: '637803226011336925'}. (5) Core catalogue re-confirmed: GET /api/games returns total=301 (Fortnite removed), GET /api/categories shows 'Cl0ud Gaming' with count=1. Cloud phone was started and stopped successfully (called start only once as instructed to minimize cost). All GeeLark endpoints working correctly."
