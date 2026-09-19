@@ -79,6 +79,8 @@ class Game(BaseModel):
     type: str = "embed"
     target: Optional[str] = None
     provider: Optional[str] = None
+    appPackage: Optional[str] = None
+    appName: Optional[str] = None
 
 
 class GameListResponse(BaseModel):
@@ -235,11 +237,15 @@ HEARTBEAT_TIMEOUT = 45         # seconds without heartbeat -> session dropped
 
 _cloud_lock = asyncio.Lock()
 GEELARK_MOBILE_TYPE = os.environ.get("GEELARK_MOBILE_TYPE", "Android 12").strip()
+PHONE_BOOT_TIMEOUT = 220        # seconds to wait for the phone to reach running state
+APP_INSTALL_TIMEOUT = 420       # seconds to wait for a team app to finish installing
 _proxy_cache = {"list": [], "idx": 0}
 
 
 class SessionReq(BaseModel):
     clientId: str
+    appPackage: Optional[str] = None
+    appName: Optional[str] = None
 
 
 async def _get_proxy_info():
@@ -290,6 +296,75 @@ async def _destroy_phone(phone_id: str):
         logger.warning(f"phone delete failed {phone_id}: {e}")
 
 
+async def _resolve_upload_app(phone_id: str, app_package: str, app_name: Optional[str]):
+    """Find a user-uploaded team app by packageName; return (appVersionId, installStatus)."""
+    res = await geelark_post("/app/installable/list", {
+        "name": app_name or "", "envId": phone_id, "getUploadApp": True, "page": 1, "pageSize": 100})
+    items = (res.get("data") or {}).get("items") or []
+    for it in items:
+        if it.get("packageName") == app_package:
+            vers = it.get("appVersionInfoList") or []
+            if vers:
+                return vers[0].get("id"), vers[0].get("installStatus")
+    return None, None
+
+
+async def _wait_phone_running(phone_id: str, timeout: int) -> bool:
+    import time as _t
+    deadline = _t.time() + timeout
+    while _t.time() < deadline:
+        stat = await geelark_post("/phone/status", {"ids": [phone_id]})
+        sd = (stat.get("data") or {}).get("successDetails") or [{}]
+        if sd[0].get("status") == 0:   # 0 = running
+            return True
+        await asyncio.sleep(5)
+    return False
+
+
+async def _set_app_status(client_id: str, status: str):
+    await db.cloud_sessions.update_one({"clientId": client_id}, {"$set": {"appStatus": status}})
+
+
+async def _provision_app(client_id: str, phone_id: str, app_package: str, app_name: Optional[str]):
+    """Background: wait for boot, install the team app if needed, then launch it."""
+    import time as _t
+    try:
+        await _set_app_status(client_id, "preparing")
+        if not await _wait_phone_running(phone_id, PHONE_BOOT_TIMEOUT):
+            await _set_app_status(client_id, "failed")
+            return
+        version_id, install_status = await _resolve_upload_app(phone_id, app_package, app_name)
+        if not version_id:
+            logger.warning(f"team app not found for {app_package}")
+            await _set_app_status(client_id, "failed")
+            return
+        if install_status != 1:   # 1 = installed
+            await _set_app_status(client_id, "installing")
+            await geelark_post("/app/install", {"envId": phone_id, "appVersionId": version_id})
+            deadline = _t.time() + APP_INSTALL_TIMEOUT
+            installed = False
+            while _t.time() < deadline:
+                await asyncio.sleep(6)
+                _, st = await _resolve_upload_app(phone_id, app_package, app_name)
+                if st == 1:
+                    installed = True
+                    break
+                if st == 2:   # install failed
+                    break
+            if not installed:
+                await _set_app_status(client_id, "failed")
+                return
+        await _set_app_status(client_id, "launching")
+        await geelark_post("/app/start", {"envId": phone_id, "packageName": app_package})
+        await _set_app_status(client_id, "ready")
+    except Exception as e:
+        logger.warning(f"provision app failed for {client_id}: {e}")
+        try:
+            await _set_app_status(client_id, "failed")
+        except Exception:
+            pass
+
+
 async def _drop_sessions(query: dict):
     """Delete session docs matching query, tearing down each user's dedicated phone."""
     docs = await db.cloud_sessions.find(query).to_list(1000)
@@ -334,13 +409,22 @@ async def _status_for(client_id: str) -> dict:
     if not sess.get("urlIssued"):
         try:
             phone_id, url = await _create_and_start_phone(client_id)
+            set_fields = {"urlIssued": True, "phoneId": phone_id}
+            if sess.get("appPackage"):
+                set_fields["appStatus"] = "preparing"
             await db.cloud_sessions.update_one(
-                {"clientId": client_id}, {"$set": {"urlIssued": True, "phoneId": phone_id}})
+                {"clientId": client_id}, {"$set": set_fields})
             if url:
                 resp["streamUrl"] = url
+            if sess.get("appPackage"):
+                asyncio.create_task(
+                    _provision_app(client_id, phone_id, sess["appPackage"], sess.get("appName")))
         except Exception as e:
             logger.warning(f"create/start phone failed: {e}")
             resp["error"] = "Could not create a new cl0ud phone."
+    if sess.get("appPackage"):
+        resp["appName"] = sess.get("appName")
+        resp["appStatus"] = resp.get("appStatus") or sess.get("appStatus") or "preparing"
     return resp
 
 
@@ -351,7 +435,8 @@ async def session_join(req: SessionReq):
         existing = await db.cloud_sessions.find_one({"clientId": req.clientId})
         if not existing:
             await db.cloud_sessions.insert_one(
-                {"clientId": req.clientId, "status": "queued", "joinedAt": now, "lastSeen": now})
+                {"clientId": req.clientId, "status": "queued", "joinedAt": now, "lastSeen": now,
+                 "appPackage": req.appPackage, "appName": req.appName})
         else:
             await db.cloud_sessions.update_one({"clientId": req.clientId}, {"$set": {"lastSeen": now}})
         await _reconcile()

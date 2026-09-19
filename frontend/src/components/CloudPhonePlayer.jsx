@@ -25,6 +25,7 @@ export default function CloudPhonePlayer({ game, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [appStatus, setAppStatus] = useState(null);
 
   const cid = useRef(clientId());
   const frameRef = useRef(null);
@@ -49,6 +50,7 @@ export default function CloudPhonePlayer({ game, onClose }) {
 
   const applyStatus = useCallback((data) => {
     if (leftRef.current) return;
+    if (data.appStatus) setAppStatus(data.appStatus);
     if (data.status === 'queued') {
       setPhaseBoth('queued');
       setQueue({ position: data.position, activeCount: data.activeCount, maxSlots: data.maxSlots });
@@ -58,7 +60,7 @@ export default function CloudPhonePlayer({ game, onClose }) {
       if (phaseRef.current !== 'active') setPhaseBoth('active');
     } else if (data.status === 'none') {
       // dropped by server (e.g. missed heartbeats) -> rejoin
-      axios.post(`${API}/cloudphone/session/join`, { clientId: cid.current }).then(({ data: d }) => applyStatus(d)).catch(() => {});
+      axios.post(`${API}/cloudphone/session/join`, { clientId: cid.current, appPackage: game.appPackage || null, appName: game.appName || null }).then(({ data: d }) => applyStatus(d)).catch(() => {});
     }
   }, []);
 
@@ -66,7 +68,7 @@ export default function CloudPhonePlayer({ game, onClose }) {
   useEffect(() => {
     leftRef.current = false;
     setPhaseBoth('joining'); setError(null);
-    axios.post(`${API}/cloudphone/session/join`, { clientId: cid.current })
+    axios.post(`${API}/cloudphone/session/join`, { clientId: cid.current, appPackage: game.appPackage || null, appName: game.appName || null })
       .then(({ data }) => applyStatus(data))
       .catch((err) => { setError(err.response?.data?.detail || 'Could not join the cl0ud phone.'); setPhaseBoth('error'); });
     return () => leave(false);
@@ -113,9 +115,13 @@ export default function CloudPhonePlayer({ game, onClose }) {
 
   const goFullscreen = () => { const el = frameRef.current; if (el && el.requestFullscreen) el.requestFullscreen(); };
   const handleClose = () => { leave(false); onClose(); };
-  const restart = () => { leftRef.current = false; setStreamUrl(null); setError(null); setLoading(true); setRemaining(30 * 60); setReloadKey((k) => k + 1); };
+  const restart = () => { leftRef.current = false; setStreamUrl(null); setError(null); setLoading(true); setRemaining(30 * 60); setAppStatus(null); setReloadKey((k) => k + 1); };
 
   const lowTime = remaining <= 120 && remaining > 0;
+  const appLabel = game.appName || 'the g4m3';
+  const appMsg = { preparing: 'Preparing your phone for', installing: 'Installing', launching: 'Launching' };
+  const provisioning = !!game.appPackage && appStatus && !['ready', 'failed'].includes(appStatus);
+  const appFailed = !!game.appPackage && appStatus === 'failed';
 
   return (
     <div className="player-overlay">
@@ -165,6 +171,17 @@ export default function CloudPhonePlayer({ game, onClose }) {
                 <div className="spinner" />
                 <p>{phase === 'joining' ? 'Joining...' : 'Booting virtual Android phone...'}</p>
                 <span className="player-loading-hint">30-minute session &middot; up to {queue.maxSlots} players at once</span>
+              </div>
+            )}
+            {streamUrl && provisioning && (
+              <div data-testid="cloud-app-provision" style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(13,13,18,0.9)', border: '1px solid rgba(255,255,255,0.14)', color: '#fff', padding: '9px 16px', borderRadius: 999, fontSize: 13, backdropFilter: 'blur(8px)', maxWidth: '90%' }}>
+                <RotateCw size={14} className="spin-slow" style={{ color: game.colorA }} />
+                <span>{appMsg[appStatus] || 'Setting up'} <b>{appLabel}</b> &mdash; this can take a few minutes on a fresh phone</span>
+              </div>
+            )}
+            {streamUrl && appFailed && (
+              <div data-testid="cloud-app-failed" style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 6, display: 'flex', alignItems: 'center', gap: 8, background: 'rgba(60,20,20,0.92)', border: '1px solid rgba(255,140,140,0.35)', color: '#ffd9d9', padding: '9px 16px', borderRadius: 999, fontSize: 13, backdropFilter: 'blur(8px)', maxWidth: '90%' }}>
+                <AlertTriangle size={14} /> <span>Couldn't auto-open <b>{appLabel}</b>. Open it from the phone's home screen instead.</span>
               </div>
             )}
             {streamUrl && (

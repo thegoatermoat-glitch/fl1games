@@ -21,7 +21,9 @@
   "image": "/covers/minecraft.png",
   "type": "cloudphone",
   "target": "",
-  "provider": "geelark"
+  "provider": "geelark",
+  "appPackage": "com.mojang.minecraftpe",
+  "appName": "Minecraft"
  },
  {
   "slug": "terraria-cloud",
@@ -33,7 +35,9 @@
   "image": "/covers/terraria.webp",
   "type": "cloudphone",
   "target": "",
-  "provider": "geelark"
+  "provider": "geelark",
+  "appPackage": "com.and.games505.TerrariaPaid",
+  "appName": "Terraria"
  },
  {
   "slug": "1-on-1-soccer",
