@@ -88,8 +88,18 @@ done
 [ "${BOOT:-0}" = "1" ] || die "Android did not boot; check: docker logs redroid"
 
 # --------------------------------------------------- 5. adb multi-install Roblox
+log "Selecting the ABI split that matches this host..."
+case "$ARCH" in
+  x86_64|amd64)   ABI_SPLIT="$SPLITS/split_config.x86_64.apk" ;;
+  aarch64|arm64)  ABI_SPLIT="$SPLITS/split_config.arm64_v8a.apk" ;;
+  *)              ABI_SPLIT="" ;;
+esac
+INSTALL_SET=("$SPLITS/base.apk")
+[ -n "$ABI_SPLIT" ] && [ -f "$ABI_SPLIT" ] && INSTALL_SET+=("$ABI_SPLIT")
+[ -f "$SPLITS/split_gmasdk.apk" ] && INSTALL_SET+=("$SPLITS/split_gmasdk.apk")
+echo "  installing: ${INSTALL_SET[*]##*/}"
 log "Sideloading Roblox via adb install-multiple..."
-adb -s 127.0.0.1:5555 install-multiple -r -g "$SPLITS"/*.apk
+adb -s 127.0.0.1:5555 install-multiple -r -g "${INSTALL_SET[@]}"
 
 # ---------------------------------------------------------------- 6. verify + URL
 log "Verifying package registry..."
