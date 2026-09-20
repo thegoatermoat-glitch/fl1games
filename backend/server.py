@@ -511,12 +511,18 @@ async def _orch_headers() -> dict:
 async def _orch_allocate(client_id: str):
     base = await _orch_base()
     if not base:
-        raise RuntimeError("orchestrator URL not configured")
-    r = await http_client.post(f"{base}/allocate", json={"clientId": client_id},
-                               headers=await _orch_headers(), timeout=90)
+        raise RuntimeError("No orchestrator URL set - open the Server panel and paste http://YOUR_VPS_IP:9000")
+    try:
+        r = await http_client.post(f"{base}/allocate", json={"clientId": client_id},
+                                   headers=await _orch_headers(), timeout=90)
+    except Exception:
+        raise RuntimeError(f"Cannot reach orchestrator at {base} - is it running and is port 9000 open?")
+    if r.status_code == 401:
+        raise RuntimeError("Token mismatch (401): the token in the Server panel must equal the VPS ORCHESTRATOR_TOKEN")
     if r.status_code == 503:
-        raise RuntimeError("orchestrator at capacity")
-    r.raise_for_status()
+        raise RuntimeError("All phones are busy right now (pool full)")
+    if r.status_code >= 400:
+        raise RuntimeError(f"Orchestrator returned HTTP {r.status_code}")
     d = r.json()
     return d.get("id"), d.get("streamUrl")
 
@@ -583,7 +589,7 @@ async def _ovh_status_for(client_id: str) -> dict:
                 resp["streamUrl"] = url
         except Exception as e:
             logger.warning(f"ovh allocate failed: {e}")
-            resp["error"] = "Could not start your cl0ud phone (orchestrator unavailable)."
+            resp["error"] = str(e) or "Could not start your cl0ud phone."
     return resp
 
 
