@@ -22,6 +22,7 @@ ADB_BASE     = int(os.environ.get("ADB_BASE_PORT", "6000"))
 ROBLOX_APK   = os.environ.get("ROBLOX_APK", "/opt/roblox/roblox_final.apk")
 ROBLOX_URL   = os.environ.get("ROBLOX_APK_URL", "https://split-to-single.preview.emergentagent.com/api/download/roblox_final.apk")
 ROBLOX_PKG   = os.environ.get("ROBLOX_PKG", "com.roblox.client")
+STREAM_PLAYER = os.environ.get("STREAM_PLAYER", "mse")   # mse | broadway | tinyh264
 STREAM_BASE  = os.environ.get("STREAM_BASE", "http://localhost:8000").rstrip("/")
 TOKEN        = os.environ.get("ORCHESTRATOR_TOKEN", "")
 DATA_ROOT    = os.environ.get("REDROID_DATA", "/root/redroid-pool")
@@ -136,7 +137,7 @@ def _start_container(slot):
 
 
 def _stream_url(addr):
-    return f"{STREAM_BASE}/#!action=stream&udid={addr}&player=broadway"
+    return f"{STREAM_BASE}/#!action=stream&udid={addr}&player={STREAM_PLAYER}"
 
 
 def _auth(token):
