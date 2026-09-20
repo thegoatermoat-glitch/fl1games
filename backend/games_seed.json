@@ -12,6 +12,18 @@
   "provider": "geelark"
  },
  {
+  "slug": "roblox-phone",
+  "name": "Roblox (Cl0ud Ph0n3)",
+  "category": "Cl0ud Gaming",
+  "colorA": "#e2e2e2",
+  "colorB": "#9a9a9a",
+  "monogram": "RB",
+  "image": "/covers/roblox-tile.jpg",
+  "type": "cloudphone",
+  "target": "",
+  "provider": "geelark"
+ },
+ {
   "slug": "minecraft-cloud",
   "name": "Minecraft (Cl0ud Ph0n3)",
   "category": "Cl0ud Gaming",
