@@ -19,9 +19,9 @@
   "colorB": "#9a9a9a",
   "monogram": "RB",
   "image": "/covers/roblox-tile.jpg",
-  "type": "cloudphone",
+  "type": "ovh",
   "target": "",
-  "provider": "geelark"
+  "provider": "ovh"
  },
  {
   "slug": "minecraft-cloud",

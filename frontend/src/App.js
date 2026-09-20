@@ -7,6 +7,7 @@ import ParticleField from './components/ParticleField';
 import GameTile from './components/GameTile';
 import GamePlayer from './components/GamePlayer';
 import CloudPhonePlayer from './components/CloudPhonePlayer';
+import OvhCloudPlayer from './components/OvhCloudPlayer';
 import { leet } from './lib/leet';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
@@ -181,7 +182,9 @@ function App() {
       {playing && (
         playing.type === 'cloudphone'
           ? <CloudPhonePlayer game={playing} onClose={() => setPlaying(null)} />
-          : <GamePlayer game={playing} onClose={() => setPlaying(null)} />
+          : playing.type === 'ovh'
+            ? <OvhCloudPlayer game={playing} onClose={() => setPlaying(null)} />
+            : <GamePlayer game={playing} onClose={() => setPlaying(null)} />
       )}
     </div>
   );

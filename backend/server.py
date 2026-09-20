@@ -466,6 +466,24 @@ async def session_stats():
     return {"active": active, "queued": queued, "maxSlots": MAX_SLOTS, "sessionSeconds": SESSION_SECONDS}
 
 
+class OvhUrlReq(BaseModel):
+    url: str
+
+
+@api_router.get("/ovh/vnc")
+async def get_ovh_vnc():
+    doc = await db.app_config.find_one({"key": "ovh_vnc_url"})
+    url = (doc or {}).get("value") or os.environ.get("OVH_VNC_URL", "")
+    return {"url": url}
+
+
+@api_router.post("/ovh/vnc")
+async def set_ovh_vnc(req: OvhUrlReq):
+    await db.app_config.update_one(
+        {"key": "ovh_vnc_url"}, {"$set": {"value": req.url.strip()}}, upsert=True)
+    return {"ok": True}
+
+
 
 
 async def seed_games():
