@@ -53,6 +53,33 @@ if [ -n "${PHONE_PROXY:-}" ]; then
 fi
 
 # ---- orchestrator (python) ----
+# ---- HTTPS for the browser stream (Let's Encrypt on the OVH hostname) ----
+DOMAIN="${DOMAIN:-vps-12149520.vps.ovh.ca}"
+if [ -n "${ENABLE_HTTPS:-}" ]; then
+  log "Setting up nginx + Let's Encrypt TLS for $DOMAIN (stream)..."
+  apt-get install -y nginx certbot python3-certbot-nginx
+  cat >/etc/nginx/sites-available/fl1nt <<EOF
+server {
+  listen 80;
+  server_name $DOMAIN;
+  location / {
+    proxy_pass http://127.0.0.1:8000/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host \$host;
+    proxy_read_timeout 86400;
+  }
+}
+EOF
+  ln -sf /etc/nginx/sites-available/fl1nt /etc/nginx/sites-enabled/fl1nt
+  rm -f /etc/nginx/sites-enabled/default
+  nginx -t && systemctl restart nginx
+  certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos -m "${EMAIL:-admin@$DOMAIN}" --redirect || \
+    echo "  certbot failed (check ports 80/443 open + DNS). Stream will stay http until fixed."
+  STREAM_BASE="https://$DOMAIN"
+fi
+
 log "Starting orchestrator API on :9000..."
 cd "$(dirname "$0")"
 python3 -m venv .venv && . .venv/bin/activate
@@ -60,7 +87,7 @@ pip install -q -r requirements.txt
 export MAX_PHONES="${MAX_PHONES:-12}"
 export ROBLOX_APK_URL
 export PHONE_PROXY="${PHONE_PROXY:-}"
-export STREAM_BASE="${STREAM_BASE:-https://YOUR_VPS_DOMAIN/stream}"
+export STREAM_BASE="${STREAM_BASE:-http://$(hostname -I | awk '{print $1}'):8000}"
 export ORCHESTRATOR_TOKEN="${ORCHESTRATOR_TOKEN:-}"
 pkill -f "uvicorn orchestrator:app" 2>/dev/null || true
 nohup .venv/bin/uvicorn orchestrator:app --host 0.0.0.0 --port 9000 >/var/log/orchestrator.log 2>&1 &
