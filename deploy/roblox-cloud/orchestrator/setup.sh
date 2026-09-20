@@ -37,6 +37,13 @@ fi
 pkill -f "ws-scrcpy" 2>/dev/null || true
 ( cd /opt/ws-scrcpy && nohup npm start >/var/log/ws-scrcpy.log 2>&1 & )
 
+# ---- proxy gateway image (only needed if PHONE_PROXY is set) ----
+if [ -n "${PHONE_PROXY:-}" ]; then
+  log "Building proxy gateway image (routes each phone through PHONE_PROXY)..."
+  docker build -t fl1nt-proxy-gw "$(dirname "$0")/proxy-gateway"
+  echo "  phones will tunnel through: ${PHONE_PROXY%%@*}@***"
+fi
+
 # ---- orchestrator (python) ----
 log "Starting orchestrator API on :9000..."
 cd "$(dirname "$0")"
@@ -44,6 +51,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -q -r requirements.txt
 export MAX_PHONES="${MAX_PHONES:-12}"
 export ROBLOX_APK_URL
+export PHONE_PROXY="${PHONE_PROXY:-}"
 export STREAM_BASE="${STREAM_BASE:-https://YOUR_VPS_DOMAIN/stream}"
 export ORCHESTRATOR_TOKEN="${ORCHESTRATOR_TOKEN:-}"
 pkill -f "uvicorn orchestrator:app" 2>/dev/null || true

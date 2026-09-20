@@ -25,6 +25,8 @@ ROBLOX_PKG   = os.environ.get("ROBLOX_PKG", "com.roblox.client")
 STREAM_BASE  = os.environ.get("STREAM_BASE", "http://localhost:8000").rstrip("/")
 TOKEN        = os.environ.get("ORCHESTRATOR_TOKEN", "")
 DATA_ROOT    = os.environ.get("REDROID_DATA", "/root/redroid-pool")
+PHONE_PROXY  = os.environ.get("PHONE_PROXY", "").strip()   # e.g. socks5://user:pass@host:port
+GATEWAY_IMAGE = os.environ.get("GATEWAY_IMAGE", "fl1nt-proxy-gw")
 
 def _image():
     env = os.environ.get("REDROID_IMAGE")
@@ -75,14 +77,32 @@ def _provision(addr):
 
 def _start_container(slot):
     name = f"fl1nt_phone_{slot}"
+    gw = f"fl1nt_gw_{slot}"
     port = ADB_BASE + slot
     addr = f"127.0.0.1:{port}"
     sh("docker", "rm", "-f", name, timeout=60)
+    sh("docker", "rm", "-f", gw, timeout=60)
     os.makedirs(f"{DATA_ROOT}/{slot}", exist_ok=True)
+
+    redroid_net = []
+    if PHONE_PROXY:
+        # per-phone proxy gateway: tunnels ALL phone traffic (TCP+UDP) via the proxy.
+        # redroid shares the gateway's netns, so the adb port is published on the gateway.
+        sh("docker", "run", "-itd", "--rm", "--name", gw,
+           "--cap-add", "NET_ADMIN", "--device", "/dev/net/tun",
+           "-p", f"{addr}:5555",
+           "-e", f"PROXY={PHONE_PROXY}",
+           GATEWAY_IMAGE,
+           timeout=120)
+        time.sleep(3)  # let the tunnel come up
+        redroid_net = ["--network", f"container:{gw}"]
+    else:
+        redroid_net = ["-p", f"{addr}:5555"]
+
     sh("docker", "run", "-itd", "--rm", "--privileged",
        "--name", name,
+       *redroid_net,
        "-v", f"{DATA_ROOT}/{slot}:/data",
-       "-p", f"{addr}:5555",
        IMAGE,
        "androidboot.redroid_width=720",
        "androidboot.redroid_height=1280",
@@ -136,6 +156,8 @@ def release(req: ReleaseReq, x_orchestrator_token: str = Header(default="")):
         if slot is not None:
             _slots.pop(slot, None)
     sh("docker", "rm", "-f", req.id, timeout=60)
+    if slot is not None:
+        sh("docker", "rm", "-f", f"fl1nt_gw_{slot}", timeout=60)
     return {"ok": True}
 
 

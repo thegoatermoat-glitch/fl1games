@@ -32,6 +32,19 @@ are HTTPS. Then in the site: open the **Roblox** tile → **Server** button → 
 `orchestrate.sh`, `docker-compose.yml`, `wsscrcpy.Dockerfile` — boots ONE redroid + stream
 and installs a bundle. Handy for a smoke test before running the pool.
 
+## Route phones through a proxy (avoid datacenter-IP blocks)
+OVH IPs are datacenter IPs and are often blocked. To tunnel **all** of each phone's
+traffic (TCP + UDP) through a residential/mobile proxy, pass `PHONE_PROXY` to setup:
+```bash
+sudo PHONE_PROXY="socks5://user:pass@proxy-host:port" \
+     STREAM_BASE=https://YOUR_VPS_DOMAIN/stream \
+     ORCHESTRATOR_TOKEN=pick-a-secret MAX_PHONES=12 ./setup.sh
+```
+This builds a `fl1nt-proxy-gw` gateway (tun2socks) and starts one gateway per phone; the
+redroid container shares the gateway's network so every packet exits via the proxy.
+Supports `socks5://` (preferred, handles UDP) and `http://`. Without `PHONE_PROXY` the
+phones use the VPS IP directly.
+
 ## Reality check (Roblox)
 Roblox's Hyperion/Byfron uses Play Integrity attestation. redroid is a container without
 hardware attestation, so Roblox commonly **installs and boots but blocks launch/login**.
