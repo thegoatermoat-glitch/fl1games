@@ -180,4 +180,5 @@ def release(req: ReleaseReq, x_orchestrator_token: str = Header(default="")):
 def health():
     with _lock:
         active = len(_slots)
-    return {"max": MAX_PHONES, "active": active, "free": MAX_PHONES - active, "image": IMAGE}
+    return {"max": MAX_PHONES, "active": active, "free": MAX_PHONES - active,
+            "image": IMAGE, "stream_base": STREAM_BASE, "proxy": bool(PHONE_PROXY)}
