@@ -21,12 +21,28 @@ modprobe binder_linux devices="binder,hwbinder,vndbinder" || true
 modprobe ashmem_linux || echo "  (ashmem missing on 5.18+ = usually fine, uses memfd)"
 printf "binder_linux\nashmem_linux\n" > /etc/modules-load.d/redroid.conf
 
-# ---- cache the merged Roblox APK ----
-log "Downloading merged Roblox APK..."
+# ---- get the merged Roblox APK (must be a real APK, not the tool's HTML page) ----
+log "Preparing Roblox APK..."
 mkdir -p /opt/roblox
-ROBLOX_APK_URL="${ROBLOX_APK_URL:-https://split-to-single.preview.emergentagent.com/api/download/roblox_final.apk}"
-curl -fL "$ROBLOX_APK_URL" -o /opt/roblox/roblox_final.apk
-ls -lh /opt/roblox/roblox_final.apk
+DEST=/opt/roblox/roblox_final.apk
+if [ -s "$DEST" ] && unzip -tq "$DEST" >/dev/null 2>&1; then
+  echo "  using existing APK at $DEST"
+elif [ -n "${ROBLOX_APK_URL:-}" ]; then
+  echo "  downloading from $ROBLOX_APK_URL"
+  curl -fL "$ROBLOX_APK_URL" -o "$DEST" || true
+  if ! unzip -tq "$DEST" >/dev/null 2>&1; then
+    rm -f "$DEST"
+    die "downloaded file is NOT a valid APK (the split-to-single tool serves a web page, not a direct file).
+  Fix: open the tool in your browser, merge your .apkm to a single .apk, then copy it to the VPS:
+      scp roblox_final.apk root@THIS_VPS:/opt/roblox/roblox_final.apk
+  and re-run this script (it will reuse the file)."
+  fi
+else
+  die "No APK found. Copy your merged APK to the VPS first:
+      scp roblox_final.apk root@THIS_VPS:/opt/roblox/roblox_final.apk
+  then re-run this script."
+fi
+ls -lh "$DEST"
 
 # ---- ws-scrcpy on the HOST (shares host adb with the orchestrator) ----
 log "Setting up ws-scrcpy (browser stream) on host :8000..."
