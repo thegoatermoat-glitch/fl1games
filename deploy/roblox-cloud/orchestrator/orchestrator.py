@@ -25,6 +25,7 @@ ROBLOX_PKG   = os.environ.get("ROBLOX_PKG", "com.roblox.client")
 STREAM_BASE  = os.environ.get("STREAM_BASE", "http://localhost:8000").rstrip("/")
 TOKEN        = os.environ.get("ORCHESTRATOR_TOKEN", "")
 DATA_ROOT    = os.environ.get("REDROID_DATA", "/root/redroid-pool")
+SPLITS_DIR   = os.environ.get("ROBLOX_SPLITS_DIR", "/opt/roblox/splits")
 PHONE_PROXY  = os.environ.get("PHONE_PROXY", "").strip()   # e.g. socks5://user:pass@host:port
 GATEWAY_IMAGE = os.environ.get("GATEWAY_IMAGE", "fl1nt-proxy-gw")
 
@@ -60,8 +61,20 @@ def _adb(addr, *args, timeout=180):
     return sh("adb", "-s", addr, *args, timeout=timeout)
 
 
+def _split_files():
+    import platform
+    arch = platform.machine()
+    abi = "split_config.x86_64.apk" if arch in ("x86_64", "amd64") else "split_config.arm64_v8a.apk"
+    files = []
+    for name in ("base.apk", abi, "split_gmasdk.apk"):
+        p = os.path.join(SPLITS_DIR, name)
+        if os.path.exists(p):
+            files.append(p)
+    return files
+
+
 def _provision(addr):
-    """Wait for boot, install the merged Roblox APK, launch it. Runs in a thread."""
+    """Wait for boot, install the Roblox splits, launch it. Runs in a thread."""
     deadline = time.time() + 240
     while time.time() < deadline:
         sh("adb", "connect", addr, timeout=20)
@@ -71,7 +84,9 @@ def _provision(addr):
         time.sleep(5)
     else:
         return
-    _adb(addr, "install", "-r", "-g", ROBLOX_APK, timeout=300)
+    splits = _split_files()
+    if splits:
+        _adb(addr, "install-multiple", "-r", "-g", *splits, timeout=400)
     _adb(addr, "shell", "monkey", "-p", ROBLOX_PKG, "-c", "android.intent.category.LAUNCHER", "1", timeout=30)
 
 
