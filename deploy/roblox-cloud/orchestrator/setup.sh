@@ -36,14 +36,21 @@ rm -rf "$SPLITS"; mkdir -p "$SPLITS"
 unzip -o "$APKM" -d "$SPLITS" >/dev/null
 echo "  splits:"; ls -1 "$SPLITS"/*.apk
 
-# ---- ws-scrcpy on the HOST (shares host adb with the orchestrator) ----
-log "Setting up ws-scrcpy (browser stream) on host :8000..."
-if [ ! -d /opt/ws-scrcpy ]; then
-  git clone --depth=1 https://github.com/NetrisTV/ws-scrcpy.git /opt/ws-scrcpy
-  ( cd /opt/ws-scrcpy && npm install && npm run dist )
+# ---- in-phone VNC stream: noVNC + websockify (token proxy) on host :8000 ----
+log "Setting up noVNC + websockify (browser stream) on host :8000..."
+apt-get install -y novnc websockify || pip3 install websockify
+# locate the noVNC web root (varies by distro)
+NOVNC_WEB=/usr/share/novnc
+[ -d "$NOVNC_WEB" ] || NOVNC_WEB=/usr/share/webapps/novnc
+mkdir -p /opt/tokens
+# download the in-phone VNC server (droidVNC-NG) that each phone will run
+if [ ! -s /opt/roblox/droidvnc.apk ]; then
+  DV_URL="$(curl -fsSL https://api.github.com/repos/bk138/droidVNC-NG/releases/latest | jq -r '.assets[]?.browser_download_url' | grep -Ei '\.apk$' | head -1)"
+  [ -n "$DV_URL" ] && curl -fL "$DV_URL" -o /opt/roblox/droidvnc.apk || echo "  WARN: could not fetch droidVNC-NG apk; set DROIDVNC_APK manually"
 fi
-pkill -f "ws-scrcpy" 2>/dev/null || true
-( cd /opt/ws-scrcpy && nohup npm start >/var/log/ws-scrcpy.log 2>&1 & )
+pkill -f "websockify" 2>/dev/null || true
+nohup websockify --web="$NOVNC_WEB" --token-plugin=TokenFile --token-source=/opt/tokens 8000 \
+  >/var/log/novnc.log 2>&1 &
 
 # ---- proxy gateway image (only needed if PHONE_PROXY is set) ----
 if [ -n "${PHONE_PROXY:-}" ]; then
