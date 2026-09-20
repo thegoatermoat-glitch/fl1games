@@ -470,6 +470,11 @@ class OvhUrlReq(BaseModel):
     url: str
 
 
+class OvhConfigReq(BaseModel):
+    url: Optional[str] = None
+    token: Optional[str] = None
+
+
 @api_router.get("/ovh/vnc")
 async def get_ovh_vnc():
     doc = await db.app_config.find_one({"key": "ovh_vnc_url"})
@@ -481,6 +486,158 @@ async def get_ovh_vnc():
 async def set_ovh_vnc(req: OvhUrlReq):
     await db.app_config.update_one(
         {"key": "ovh_vnc_url"}, {"$set": {"value": req.url.strip()}}, upsert=True)
+    return {"ok": True}
+
+
+# ---------- OVH self-hosted per-user Android (redroid) session manager ----------
+# 12 concurrent phones, 25-min sessions, queue when full. Talks to a VPS-side
+# orchestrator that spins up one redroid container per user and returns a stream URL.
+OVH_MAX_SLOTS = 12
+OVH_SESSION_SECONDS = 25 * 60
+_ovh_lock = asyncio.Lock()
+
+
+async def _orch_base() -> str:
+    doc = await db.app_config.find_one({"key": "ovh_orchestrator_url"})
+    return ((doc or {}).get("value") or os.environ.get("ORCHESTRATOR_URL", "")).rstrip("/")
+
+
+async def _orch_headers() -> dict:
+    doc = await db.app_config.find_one({"key": "ovh_orchestrator_token"})
+    token = (doc or {}).get("value") or os.environ.get("ORCHESTRATOR_TOKEN", "")
+    return {"X-Orchestrator-Token": token} if token else {}
+
+
+async def _orch_allocate(client_id: str):
+    base = await _orch_base()
+    if not base:
+        raise RuntimeError("orchestrator URL not configured")
+    r = await http_client.post(f"{base}/allocate", json={"clientId": client_id},
+                               headers=await _orch_headers(), timeout=90)
+    if r.status_code == 503:
+        raise RuntimeError("orchestrator at capacity")
+    r.raise_for_status()
+    d = r.json()
+    return d.get("id"), d.get("streamUrl")
+
+
+async def _orch_release(phone_id: str):
+    if not phone_id:
+        return
+    base = await _orch_base()
+    if not base:
+        return
+    try:
+        await http_client.post(f"{base}/release", json={"id": phone_id},
+                               headers=await _orch_headers(), timeout=30)
+    except Exception as e:
+        logger.warning(f"orchestrator release failed {phone_id}: {e}")
+
+
+async def _ovh_drop_sessions(query: dict):
+    docs = await db.ovh_sessions.find(query).to_list(1000)
+    for d in docs:
+        if d.get("phoneId"):
+            await _orch_release(d["phoneId"])
+    if docs:
+        await db.ovh_sessions.delete_many({"clientId": {"$in": [d["clientId"] for d in docs]}})
+
+
+async def _ovh_reconcile():
+    now = datetime.utcnow()
+    hb_cutoff = now - timedelta(seconds=HEARTBEAT_TIMEOUT)
+    exp_cutoff = now - timedelta(seconds=OVH_SESSION_SECONDS)
+    await _ovh_drop_sessions({"lastSeen": {"$lt": hb_cutoff}})
+    await _ovh_drop_sessions({"status": "active", "startedAt": {"$lt": exp_cutoff}})
+    active = await db.ovh_sessions.count_documents({"status": "active"})
+    if active < OVH_MAX_SLOTS:
+        need = OVH_MAX_SLOTS - active
+        queued = await db.ovh_sessions.find({"status": "queued"}).sort("joinedAt", 1).limit(need).to_list(need)
+        for q in queued:
+            await db.ovh_sessions.update_one(
+                {"clientId": q["clientId"]},
+                {"$set": {"status": "active", "startedAt": now, "urlIssued": False}})
+
+
+async def _ovh_status_for(client_id: str) -> dict:
+    sess = await db.ovh_sessions.find_one({"clientId": client_id})
+    if not sess:
+        return {"status": "none", "maxSlots": OVH_MAX_SLOTS}
+    if sess["status"] == "queued":
+        pos = await db.ovh_sessions.count_documents(
+            {"status": "queued", "joinedAt": {"$lt": sess["joinedAt"]}}) + 1
+        active = await db.ovh_sessions.count_documents({"status": "active"})
+        return {"status": "queued", "position": pos, "activeCount": active, "maxSlots": OVH_MAX_SLOTS}
+    started = sess.get("startedAt") or datetime.utcnow()
+    remaining = max(0, int(OVH_SESSION_SECONDS - (datetime.utcnow() - started).total_seconds()))
+    resp = {"status": "active", "remainingSeconds": remaining, "maxSlots": OVH_MAX_SLOTS}
+    if sess.get("streamUrl"):
+        resp["streamUrl"] = sess["streamUrl"]
+    if not sess.get("urlIssued"):
+        try:
+            phone_id, url = await _orch_allocate(client_id)
+            await db.ovh_sessions.update_one(
+                {"clientId": client_id},
+                {"$set": {"urlIssued": True, "phoneId": phone_id, "streamUrl": url}})
+            if url:
+                resp["streamUrl"] = url
+        except Exception as e:
+            logger.warning(f"ovh allocate failed: {e}")
+            resp["error"] = "Could not start your cl0ud phone (orchestrator unavailable)."
+    return resp
+
+
+@api_router.post("/ovh/session/join")
+async def ovh_join(req: SessionReq):
+    async with _ovh_lock:
+        now = datetime.utcnow()
+        existing = await db.ovh_sessions.find_one({"clientId": req.clientId})
+        if not existing:
+            await db.ovh_sessions.insert_one(
+                {"clientId": req.clientId, "status": "queued", "joinedAt": now, "lastSeen": now})
+        else:
+            await db.ovh_sessions.update_one({"clientId": req.clientId}, {"$set": {"lastSeen": now}})
+        await _ovh_reconcile()
+        return await _ovh_status_for(req.clientId)
+
+
+@api_router.post("/ovh/session/heartbeat")
+async def ovh_heartbeat(req: SessionReq):
+    async with _ovh_lock:
+        await db.ovh_sessions.update_one({"clientId": req.clientId}, {"$set": {"lastSeen": datetime.utcnow()}})
+        await _ovh_reconcile()
+        return await _ovh_status_for(req.clientId)
+
+
+@api_router.post("/ovh/session/leave")
+async def ovh_leave(req: SessionReq):
+    async with _ovh_lock:
+        await _ovh_drop_sessions({"clientId": req.clientId})
+        await _ovh_reconcile()
+        return {"left": True}
+
+
+@api_router.get("/ovh/session/stats")
+async def ovh_stats():
+    active = await db.ovh_sessions.count_documents({"status": "active"})
+    queued = await db.ovh_sessions.count_documents({"status": "queued"})
+    return {"active": active, "queued": queued, "maxSlots": OVH_MAX_SLOTS, "sessionSeconds": OVH_SESSION_SECONDS}
+
+
+@api_router.get("/ovh/config")
+async def ovh_get_config():
+    base = await _orch_base()
+    return {"configured": bool(base)}
+
+
+@api_router.post("/ovh/config")
+async def ovh_set_config(req: OvhConfigReq):
+    if req.url is not None:
+        await db.app_config.update_one(
+            {"key": "ovh_orchestrator_url"}, {"$set": {"value": req.url.strip()}}, upsert=True)
+    if req.token is not None:
+        await db.app_config.update_one(
+            {"key": "ovh_orchestrator_token"}, {"$set": {"value": req.token.strip()}}, upsert=True)
     return {"ok": True}
 
 

@@ -1,29 +1,39 @@
-# Self-hosted Roblox cloud instance (OVH Ubuntu 22.04)
+# Self-hosted per-user Android cloud (OVH) — Roblox tile
 
-Runs Android (redroid) in Docker and streams it to a browser. Performs:
-1. recode `.apkm` -> split `.apk`s (via `unapkm`, or plain unzip fallback)
-2. arch-aware redroid image (`jj9011/redroid:11.0.0-houdini` on x86_64, `redroid/redroid:11.0.0-latest` on arm64) + `webscreen` stream on host :8080
-3. `adb install-multiple` of the splits
-4. verify `com.roblox.client` and print the play URL
+Two paths live here:
 
-## Run it (on the OVH VPS, NOT the app-build pod)
+## A) Multi-user pool orchestrator  ← use this (matches the site's Roblox tile)
+`orchestrator/` spins up **one redroid Android phone per user** (max 12, 25 min each),
+auto-installs the **merged** Roblox APK from your `split-to-single` link, launches it, and
+streams each phone to the browser via ws-scrcpy. The website calls its HTTP API.
+
+### Run on the OVH VPS (Ubuntu 22.04, KVM/dedicated, ports 9000 + 443 open)
 ```bash
-scp -r roblox-cloud/ root@YOUR_OVH_IP:/root/
+scp -r orchestrator root@YOUR_OVH_IP:/root/
 ssh root@YOUR_OVH_IP
-cd /root/roblox-cloud
-chmod +x orchestrate.sh
-sudo ./orchestrate.sh /root/Roblox.apkm
+cd /root/orchestrator
+chmod +x setup.sh
+sudo STREAM_BASE=https://YOUR_VPS_DOMAIN/stream ORCHESTRATOR_TOKEN=pickAsecret MAX_PHONES=12 ./setup.sh
 ```
-Open the printed `http://YOUR_OVH_IP:8080`.
+Put nginx TLS in front (see `orchestrator/nginx.sample.conf`) so `/stream/` and `/orch/`
+are HTTPS. Then in the site: open the **Roblox** tile → **Server** button → set
+`URL=https://YOUR_VPS_DOMAIN/orch` and the token. Done — users now get their own phone.
 
-## Hard requirements
-- **KVM/dedicated VPS** (OVH VPS/Dedicated is fine; OpenVZ/LXC is NOT — you must be able to `modprobe`).
-- Ports 5555 and 8080 open in the OVH firewall / security group.
-- 4+ vCPU, 8GB+ RAM. redroid uses software GPU by default; 3D is heavy.
+### API contract (what the site expects)
+- `POST /allocate {clientId}` → `{id, streamUrl}` (or `503` when the pool is full)
+- `POST /release  {id}`       → `{ok:true}`
+- `GET  /health`              → `{max, active, free}`
 
-## Important reality check on Roblox
-Roblox's Hyperion/Byfron anti-cheat uses Google **Play Integrity attestation**. redroid is a
-container without hardware-backed attestation, so Roblox commonly **fails the check and closes
-on launch / won't let you sign in**. This stack will install and boot Roblox, but staying logged
-in and playing is not guaranteed and cannot be reliably bypassed. Minecraft/Terraria and most
-non-attested apps work well on this same stack.
+### Host arch
+- x86_64 → `jj9011/redroid:11.0.0-houdini` (ARM translation)
+- arm64  → `redroid/redroid:11.0.0-latest`
+
+## B) Single-phone quick test
+`orchestrate.sh`, `docker-compose.yml`, `wsscrcpy.Dockerfile` — boots ONE redroid + stream
+and installs a bundle. Handy for a smoke test before running the pool.
+
+## Reality check (Roblox)
+Roblox's Hyperion/Byfron uses Play Integrity attestation. redroid is a container without
+hardware attestation, so Roblox commonly **installs and boots but blocks launch/login**.
+Minecraft/Terraria and most apps work fine on this same stack. The APK page itself notes
+"anti-tamper checks may still block launch/login".

@@ -9,8 +9,9 @@ cloud Android (GeeLark) and a self-hosted OVH noVNC option.
 - **Cl0ud Ph0n3** (slug `roblox-cloud`, type `cloudphone`): generic GeeLark phone, no auto-launch.
 - **Minecraft** (`minecraft-cloud`, `cloudphone`): auto installs+launches team app `com.mojang.minecraftpe`.
 - **Terraria** (`terraria-cloud`, `cloudphone`): auto installs+launches `com.and.games505.TerrariaPaid`.
-- **Roblox (Cl0ud Ph0n3)** (`roblox-phone`, type `ovh`): streams a self-hosted OVH VPS via noVNC
-  (OvhCloudPlayer). Mouse/touch/keyboard via noVNC. Cover `/covers/roblox-tile.jpg`.
+- **Roblox (Cl0ud Ph0n3)** (`roblox-phone`, type `ovh`): per-user self-hosted redroid phone
+  via VPS orchestrator (OvhCloudPlayer). 12-slot queue, 25-min sessions, appetize-style viewer
+  with touch/keyboard. Cover `/covers/roblox-tile.jpg`.
 
 ## Game types
 - `embed` (default): proxied via `/api/games/{slug}/play`.
@@ -22,8 +23,11 @@ cloud Android (GeeLark) and a self-hosted OVH noVNC option.
 ## Key endpoints
 - `GET /api/games`, `/api/categories`, `/api/games/{slug}`, `/api/games/{slug}/play`
 - Cloudphone: `POST /api/cloudphone/session/{join,heartbeat,leave}`, `GET /api/cloudphone/session/stats`
-- OVH VNC: `GET /api/ovh/vnc` (returns configured URL), `POST /api/ovh/vnc {url}` (runtime-editable,
-  stored in `app_config` collection, env fallback `OVH_VNC_URL`). Token rotation without redeploy.
+- OVH VNC: `GET/POST /api/ovh/vnc` (static console URL, legacy).
+- OVH pool: `POST /api/ovh/session/{join,heartbeat,leave}`, `GET /api/ovh/session/stats`
+  (12 slots, 25 min, queue). `GET/POST /api/ovh/config` sets orchestrator URL+token
+  (app_config, env fallback ORCHESTRATOR_URL/ORCHESTRATOR_TOKEN). Calls VPS orchestrator
+  /allocate + /release per user.
 
 ## GeeLark app auto-launch (Minecraft/Terraria)
 Background `_provision_app` in server.py: wait phone running → resolve uploaded team app via
@@ -34,9 +38,11 @@ appStatus surfaced to CloudPhonePlayer banner. Falls back to home screen on fail
 ~430 games. 124 original mini-games added from GitHub (wangzifan396-wzf/mini-browser-games).
 
 ## Deploy artifacts
-`/app/deploy/roblox-cloud/` — orchestrator to self-host redroid + browser stream on an OVH VPS
-(orchestrate.sh, docker-compose.yml, wsscrcpy.Dockerfile, README.md). Roblox anti-cheat (Byfron)
-likely blocks redroid; Minecraft/Terraria fine.
+`/app/deploy/roblox-cloud/orchestrator/` — VPS-side redroid POOL orchestrator (FastAPI):
+one redroid phone per user (max 12), installs merged Roblox APK from split-to-single link,
+ws-scrcpy browser stream, /allocate + /release + /health. setup.sh + nginx.sample.conf.
+`/app/deploy/roblox-cloud/` also has a single-phone smoke-test (orchestrate.sh + compose).
+Roblox anti-cheat (Byfron) likely blocks launch/login; Minecraft/Terraria fine.
 
 ## Implemented (2026-06)
 - Renamed Roblox→Cl0ud Ph0n3; added Minecraft/Terraria/Roblox cloud tiles with user logos.
