@@ -163,7 +163,8 @@ def _remove_token(token):
 
 def _stream_url(token):
     import urllib.parse
-    wspath = urllib.parse.quote(f"websockify?token={token}")
+    # websockify serves the ws endpoint at root; token goes in the query of the path.
+    wspath = urllib.parse.quote(f"?token={token}")
     return f"{STREAM_BASE}/vnc.html?autoconnect=1&resize=scale&reconnect=1&path={wspath}"
 
 
