@@ -38,10 +38,22 @@ echo "  splits:"; ls -1 "$SPLITS"/*.apk
 
 # ---- in-phone VNC stream: noVNC + websockify (token proxy) on host :8000 ----
 log "Setting up noVNC + websockify (browser stream) on host :8000..."
-apt-get install -y novnc websockify || pip3 install websockify
-# locate the noVNC web root (varies by distro)
-NOVNC_WEB=/usr/share/novnc
-[ -d "$NOVNC_WEB" ] || NOVNC_WEB=/usr/share/webapps/novnc
+# websockify from pip = reliable across distros (apt version is often broken/missing)
+pip3 install --quiet --upgrade websockify || apt-get install -y websockify
+# Pin a known-good noVNC release instead of the flaky distro package.
+# This guarantees /vnc.html exists no matter what the OS ships.
+NOVNC_WEB=/opt/novnc
+NOVNC_VER="${NOVNC_VER:-1.5.0}"
+if [ ! -s "$NOVNC_WEB/vnc.html" ]; then
+  log "Fetching noVNC $NOVNC_VER -> $NOVNC_WEB"
+  rm -rf "$NOVNC_WEB" /tmp/novnc.tgz
+  curl -fL "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VER}.tar.gz" -o /tmp/novnc.tgz
+  mkdir -p "$NOVNC_WEB"
+  tar -xzf /tmp/novnc.tgz -C "$NOVNC_WEB" --strip-components=1
+fi
+# open vnc.html directly at "/" too (some browsers/bookmarks hit root)
+ln -sf "$NOVNC_WEB/vnc.html" "$NOVNC_WEB/index.html"
+[ -s "$NOVNC_WEB/vnc.html" ] || echo "  ERROR: noVNC web root missing at $NOVNC_WEB/vnc.html"
 mkdir -p /opt/tokens
 # download the in-phone VNC server (droidVNC-NG) that each phone will run
 if [ ! -s /opt/roblox/droidvnc.apk ]; then
@@ -54,6 +66,12 @@ fuser -k 8000/tcp 2>/dev/null || true
 sleep 1
 nohup websockify --web="$NOVNC_WEB" --token-plugin=TokenFile --token-source=/opt/tokens 8000 \
   >/var/log/novnc.log 2>&1 &
+sleep 2
+if curl -fsS -o /dev/null "http://127.0.0.1:8000/vnc.html"; then
+  echo "  OK: noVNC page served at http://127.0.0.1:8000/vnc.html"
+else
+  echo "  ERROR: /vnc.html not served on :8000 — see /var/log/novnc.log"; tail -n 20 /var/log/novnc.log || true
+fi
 
 # ---- proxy gateway image (only needed if PHONE_PROXY is set) ----
 if [ -n "${PHONE_PROXY:-}" ]; then
